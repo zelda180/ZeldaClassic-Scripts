@@ -1,0 +1,26 @@
+const int DEFAULT_2D_WIDTH  = 0; //
+const int DEFAULT_2D_HEIGHT = 0; //not used
+
+const int DEFAULT_3D_WIDTH  = 0; //
+const int DEFAULT_3D_HEIGHT = 0; //
+const int DEFAULT_3D_DEPTH  = 0; //not used
+
+
+int element2D( int x, int y ){
+    return ( x + ( y * DEFAULT_2D_WIDTH ) );
+}
+int element2D( int x, int y, int max_x ){
+    return ( x + ( y * max_x ) );
+}
+int element3D( int x, int y, int z ){
+    return ( x + ( y * DEFAULT_3D_WIDTH ) ) + ( z * ( DEFAULT_3D_HEIGHT * DEFAULT_3D_WIDTH ) );
+}
+int element3D( int x, int y, int z, int max_x, int max_y ){
+    return ( x + ( y * max_x) ) + ( z * ( max_y * max_x ) );
+}
+int e2D( int x, int y ){
+    return ( x + ( y * DEFAULT_2D_WIDTH ) );
+}
+int e3D( int x, int y, int z ){
+    return ( x + ( y * DEFAULT_3D_WIDTH ) ) + ( z * ( DEFAULT_3D_HEIGHT * DEFAULT_3D_WIDTH ) );
+}

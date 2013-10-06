@@ -1,0 +1,293 @@
+//-- Global variables for ExtraTallScreens --
+
+// Constants for the combo arrays:
+//* Maximum number of layers on a screen (6 layers + layer 0). */
+const int MAX_Z = 7;
+//* Maximum number of rows to draw. */
+const int MAX_Y = 4;
+//* Maximum number of columns to draw. */
+const int MAX_X = 16;
+//* Maximum valid index for accessing a screen's array of combos.
+const int MAX_CINDEX = 175;
+
+// Top-of-screen combo data:
+//* A 3D array of combos, organized [layer][row][column], dim 7 * 4 * 16. */
+int combos[384];
+//* A 3D array of csets corresponding one-to-one with combos[]. */
+int csets[384]; // 3D array of csets corresponding 1:1 with items in combos.
+//**
+// * A 3D array to keep track of whether a combo is overhead. It corresponds
+// * one-to-one with combos[]. Overhead combos are drawn on "layer 3.5".
+// */
+bool overhead[384]; // 3D array keeping track of whether a combo is overhead.
+//** 
+// * A 3D array keeping track of every layer map on every screen on every map.
+// * Organized [map][screen][layer].
+// * Dimensions 255 maps * 128 screens/map * 6 layers/screen.
+// */
+int layer_map[195840];
+//**
+// * A 3D array keeping track of every layer screen on every screen on every
+// * map. Screens represented in hex. Corresponds one-to-one with layer_map.
+// */
+int layer_screen[195840]; // in hex.
+
+// Current screen to check if the screen changes:
+//* Screen information from the previous frame. */
+int old_screen; int old_map;
+//* Screen information for the current frame. */
+int this_screen; int this_map;
+//* Array keeping track of which maps have been visited. */
+bool visited[255];
+
+//-- Main functions for ExtraTallScreens --
+void init_extra_tall_screens() {
+	fill_array(layer_map);
+	fill_array(layer_screen);
+	old_screen = Game->GetCurScreen();
+	old_map = Game->GetCurMap();
+	this_screen = old_screen;
+	this_map = old_map;
+	visit_every_screen();
+	fill_array(visited, false, 255);
+	visited[this_map - 1] = true;
+}
+
+void ExtraTallScreens() {
+	this_screen = Game->GetCurScreen();
+	this_map = Game->GetCurMap();
+	if ((Screen->Flags[SF_VIEW] & 0000100b) != 0000100b) {
+		if (GetDMapFlag(Game->GetCurDMap(), DMF_SCRIPT1) 
+			&& (ScreenFlag(SF_MISC, 0) != 1b)
+			//&& (layerMap[element3D(0, this_screen - 0x10, this_map - 1,
+			) { //	6, 128)] > 0)) {
+			// Draw top screen if dmap enables it, screen does
+			// not disable it, and screen above it is visited.
+			draw_top_screen(true);
+		}
+	}
+	if (this_screen != old_screen || this_map != old_map) {
+		load_screen_layers();
+		if (this_map != old_map && !visited[this_map - 1]) {
+			visit_every_screen();
+			visited[this_map - 1] = true;
+		}
+		old_screen = this_screen;
+		old_map = this_map;
+	}
+}
+
+void TestCSet() {
+
+}
+
+//-- Helper functions for ExtraTallScreens --
+
+//**
+// * Visit every screen on the current map and populate layer_map and
+// * layer_screen with the available information on each screen.
+// * This function should become deprecated if it ever becomes possible to
+// * access this information without actually visiting each screen.
+// */
+void visit_every_screen() {
+	int d_map = Game->GetCurDMap();
+	int orig_screen = Game->GetCurDMapScreen();
+	int loading[] = "Loading";
+	int hp = Link->HP;
+	if (GetDMapFlag(Game->GetCurDMap(), DMF_SCRIPT1) == 0) return; // Already visited.
+	Waitframe();
+	for (int j = 0x00; j < 0x80; j++) {
+		Screen->Rectangle(7, 0, 0, 256, 176, 1, 1, 0, 0, 0, 1, 128);
+		Screen->DrawString(6, 4, 4, FONT_DSPHANTOMP, 1, -1, TF_NORMAL, 
+			loading, 128);
+		Link->PitWarp(d_map, j);
+		Link->HP = hp;
+		Waitframe(); // Sometimes the screen isn't ready at waitdraw.
+		// But this tends to be quirky (letting Link cave warp, etc).
+		load_screen_layers(); // Load screen layers on dmap screen j.
+	}
+	Link->Warp(d_map, orig_screen);
+	// Remember to always set a warp return point!
+}
+
+void draw_top_screen(bool native) {
+	if (native) {
+		draw_top_screen();
+	} else {
+		int top_screen = Game->GetCurScreen() - 0x10;
+		int curr_map = Game->GetCurMap();
+		
+		if (top_screen < 0) return; // Nothing to draw.
+		DrawScreen(0, curr_map, top_screen, 64, 64, 0);
+	}
+}
+
+//**
+// * Draw the bottom portion of the screen above this current screen (if such
+// * a screen exists) onto the screen area reserved for the subscreen.
+// */
+void draw_top_screen() {
+	int top_screen = Game->GetCurScreen() - 0x10;
+	int curr_map = Game->GetCurMap();
+	int pos_x = 240;	int pos_y = -16;
+	int combo; int cset; bool draw_over;
+	
+	if (top_screen < 0) return; // Nothing to draw.
+	if (old_screen != this_screen || old_map != this_map) {
+		// Rebuild screen combo cache.
+		screen_to_array(curr_map, top_screen);
+	}
+	
+	for (int k = 0; k < MAX_Z; k++) {
+		for (int j = 0; j < MAX_Y; j++) {
+			for (int i = 0 ; i < MAX_X; i++) {
+				combo = combos[element3D(i, j, k, MAX_X, MAX_Y)];
+				cset = csets[element3D(i, j, k, MAX_X, MAX_Y)];
+				draw_over = overhead[element3D(i, j, k, MAX_X, MAX_Y)];
+				
+				if (combo >= 0) {
+					if (draw_over && (k == 0)) {
+						Screen->FastCombo(3, pos_x, pos_y, combo, cset, 128);
+					} else {
+						Screen->FastCombo(k, pos_x, pos_y, combo, cset, 128);
+					}
+				}
+				//Screen->DrawCombo(0, pos_x, pos_y, combo, 1, 1, cset, 1, 1, 0, 
+				//	0, 0, 0, flip, true, 128);
+				pos_x -= 16;
+			}
+			pos_x = 240; pos_y -=16; // Carriage return; reset x and move y up.
+		}
+		pos_x = 240; pos_y = -16;
+	}
+}
+
+//**
+// * Populate the layer_map and layer_screen arrays with information about the
+// * layers on the current screen and current map. This information should
+// * probably be passed in as parameters but this has not been set up set.
+// * eg,
+// * @param curr_map the map of the screen being probed for layers.
+// * @param curr_scr the screen on curr_map being probed for layers.
+// * That way this function can be easily updated if more ZScript Game
+// * methods become available.
+// */
+void load_screen_layers() {
+	int map = Game->GetCurMap(); int screen = Game->GetCurScreen();
+	int curr_map; int curr_scr;
+	for (int i = 0; i < 6; i++) {
+		curr_map = Screen->LayerMap(i + 1);
+		curr_scr = Screen->LayerScreen(i + 1);
+		layer_map[element3D(i, screen, map - 1, 6, 128)] = curr_map;
+		layer_screen[element3D(i, screen, map - 1, 6, 128)] = curr_scr;
+	}
+}
+
+//**
+// * Write the combo ids of the last MAX_Y rows on the screen to 3D array
+// * combos & that combo's CSet to csets.
+// * @param base_map the map set to the screen's layer 0.
+// * @param top_screen the screen above the current screen (at (x, y-1)).
+// */
+void screen_to_array(int base_map, int top_screen) {
+	int combo;
+	int cset;
+	int layer_index;
+	bool draw_over;
+	
+	int cindex = MAX_CINDEX;
+	int map = base_map;
+	int screen = top_screen;
+	
+	// Refresh cache to default values.
+	fill_array(combos); fill_array(csets); fill_array(overhead, false, 384);
+	for (int k = 0; k < MAX_Z; k++) { // k is the layer number
+		if (k > 0) { // Need to figure out which map and screen the layer uses.
+			// index for layer k of this screen.
+			layer_index = element3D(k - 1, top_screen, base_map - 1, 6, 128);
+			map = layer_map[layer_index];
+			if (map < 1) continue; // Screen doesn't use this layer/no information
+			screen = layer_screen[layer_index];
+		}
+		for (int j = 0; j < MAX_Y; j++) {
+			for (int i = 0; i < MAX_X; i++) {
+				combo = Game->GetComboData(map, screen, cindex);
+				cset = Game->GetComboCSet(map, screen, cindex);
+				draw_over = should_draw_overhead(map, screen, cindex--);
+				combos[element3D(i, j, k, MAX_X, MAX_Y)] = combo;
+				csets[element3D(i, j, k, MAX_X, MAX_Y)] = cset;
+				overhead[element3D(i, j, k, MAX_X, MAX_Y)] = draw_over;
+			}
+		}
+		cindex = MAX_CINDEX;
+	}
+}
+
+//** 
+// * Return whether the combo at cindex on map' screen should be drawn
+// * overhead.
+// */
+bool should_draw_overhead(int map, int screen, int cindex) {
+	int type = Game->GetComboType(map, screen, cindex);
+	int flag = Game->GetComboFlag(map, screen, cindex);
+	return (type == CT_OVERHEAD)
+		|| (flag >= CF_PUSHLR && flag <= CF_PUSHRIGHTINS)
+		|| (flag == CF_PUSHUPDOWN || flag == CF_PUSH4WAY);
+}
+
+//-- Helper functions that should only be included in your file only once --
+
+//**
+// * Quickly fill array with 0's
+// * @param array an array of ints.
+// *
+void fill_array(int array) {
+	fill_array(array, 0);
+}
+
+//**
+// * Fill an int array with a particular int value.
+// * @param array an array of ints.
+// * @param value an int value.
+// */
+void fill_array(int array, int value) {
+	for (int i = 0; i < SizeOfArray(array); i++) {
+		array[i] = value;
+	}
+}
+
+//**
+// * Fill an ffc array of size with a particular ffc.
+// * @param array an array of ffcs.
+// * @param value an ffc.
+// * @param size the size of this array.
+// */
+void fill_array(ffc array, ffc value, int size) {
+	for (int i = 0; i < size; i++) {
+		array[i] = value;
+	}
+}
+
+//**
+// * Fill an npc array of size with a particular npc.
+// * @param array an array of npcs.
+// * @param value an npc.
+// * @param size the size of this array.
+// */
+void fill_array(npc array, npc value, int size) {
+	for (int i = 0; i < size; i++) {
+		array[i] = value;
+	}
+}
+
+//**
+// * Fill an bool array of size with a particular bool value.
+// * @param array an array of bools.
+// * @param value a boolean value.
+// * @param size the size of this array.
+// */
+void fill_array(bool array, bool value, int size) {
+	for (int i = 0; i < size; i++) {
+		array[i] = value;
+	}
+}

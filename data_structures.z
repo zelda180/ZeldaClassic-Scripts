@@ -1,0 +1,24 @@
+import "std.zh"
+
+ffc remove(ffc list, int index) {
+	// Take a list of ffcs and return a new ffc array without
+	// entry list[index].
+	
+	ffc new_list[SizeOfArray(list)];
+	for (i = 0; i < index; i++) {
+		new_list[i] = list[i];
+	}
+	for (i = index; i < SizeOfArray(list); i++) {
+		new_list[i] = list[i - 1]
+	}
+	return new_list;
+}
+
+ffc enqueue(ffc queue, int queue_pos, ffc new_ffc) {
+	// Add new_ffc to queue_pos + 1 of queue, and return the result.
+	
+	if queue_pos < SizeOfArray(queue) {
+		queue[queue_pos + 1] = new_ffc
+	}
+	return queue;
+}

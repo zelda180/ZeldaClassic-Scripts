@@ -1,0 +1,283 @@
+ffc script Cucco {
+	//========================================================================
+	// Set this ffc to randomly move around and initiate a chicken attack if
+	// Link attacks it too often. Reset after a user-set duration.
+	
+	// D0 = hits_to_attack: amount of abuse a chicken will take before it
+	// starts a chicken attack
+	// D1 = attack_duration: number of frames before chicken attack ends.
+	// Endless attack when 0.
+	// D2 = damage: Damage in HP that each hit from a cucco will do to Link.
+	// D3 = num_cuccos: number of cuccos to spawn when attacking.
+	// D4 = sfx_cucco_hurt: sfx to play when you hit a cucco
+	// D5 = sfx_cucco_agitated: sfx to play when cucco initiates a cucco
+	// attack and randomly throughout the cucco attack.
+	
+	// Note: Cucco will move at the ffc x/y speed setting at 0 acceleration.
+	// Attacking cuccos will move at the ffc's x speed.
+	//========================================================================
+	
+	
+	void run(int hits_to_attack, int attack_duration, int damage, 
+		int num_cuccos, int sfx_cucco_hurt, int sfx_cucco_agitated) {
+		
+		// Set accel to 0 so I can shorten walkability formulas.
+		this->Ax = 0;
+		this->Ay = 0;
+		
+		int SPAWN_INTERVAL = 60; // Frames between cucco spawn.
+		
+		// Store default ffc settings.
+		int orig_d = this->Data;
+		float attack_speed = this->Vy;
+		float const_speed_x = this->Vx;
+		float const_speed_y = this->Vx;
+		
+		// int curr_hp = max_hp; // Never implemented.
+		float dir_threshold_x = 0.97; // Min. chance of changing x-dir
+		float dir_threshold_y = 0.97; // Min. chance of changing y-dir
+		
+		// Frames to wait until next collision should be recorded.
+		int idle_clock = 0; 
+		int ACTION_TIMEOUT = 32; // Timeout for next time Link can hurt cucco.
+		int DAMAGE_TIMEOUT = 64; // Timeout the next time Link can be hurt.
+		// Necessary for keeping an accurate hit counter without losing
+		// movement control.
+		
+		// Pre-cucco attack collision information.
+		int hits_left = hits_to_attack;
+		bool cucco_attack = false;
+		int attack_time_left = attack_duration;
+		
+		// Cucco attack data structures.
+		ffc chicken_stack[32];
+		int chicken_stack_pos = -1; // Position of the end of the stack.
+		ffc on_screen_cucco[32];
+		int on_screen_size = -1; // Keep track of actual size.
+		int cucco_slot = 0; //on_screen_cucco item in which to put a new cucco.
+		if (num_cuccos >= 32) {
+			num_cuccos = 31;
+		}
+		if ((num_cuccos > 0) && (num_cuccos < 32)) {
+			for (int i = 0; i < num_cuccos; i++) {
+				ffc cucco_enemy = Screen->LoadFFC(getFFC(1, 32));
+				cucco_enemy->Data = orig_d;
+				cucco_enemy->CSet = this->CSet;
+				// Use same graphics as original cuccos.
+				cucco_enemy->X = -256;
+				cucco_enemy->Y = -256; // Move far off screen.
+				cucco_enemy->Vx = 0;
+				cucco_enemy->Vy = 0; // Don't let it move.
+				cucco_enemy->Ax = 0;
+				cucco_enemy->Ay = 0;
+				chicken_stack[i] = cucco_enemy;
+				chicken_stack_pos++;
+			}
+		}
+		// Create a blank ffc to fill the existing slots in on_screen_cucco.
+		ffc blank_ffc = Screen->LoadFFC(getFFC(1, 32));
+		for (int i=0; i < 32; i++) {
+			on_screen_cucco[i] = blank_ffc;
+		}
+		
+		//while (max_hp == 0 || curr_hp >=0) {
+			// HP was going to be a feature but I never implemented it.
+			// This would take into account a weapon's strength rating
+			// and turn the cucco into a defeatable enemy.
+		while (true) {
+			//================================================================
+			// Adjust cucco's movement.
+			// x-motion
+			if (this->Vx <0) {
+				this->Data = orig_d + 1;
+			} else {
+				this->Data = orig_d;
+			}
+			if (Randf(1) >= dir_threshold_x) {
+				// Toggle x direction 2-3% of the time.
+				this->Vx = -const_speed_x;
+				const_speed_x = this->Vx;
+				dir_threshold_x = 0.97;
+			} else if (Screen->isSolid(this->X + this->Vx, this->Y + 16) || 
+				Screen->isSolid(this->X + 16 + this->Vx, this->Y + 16) || 
+				Screen->isSolid(this->X + this->Vx, this->Y + 8) ||
+				Screen->isSolid(this->X + 16 + this->Vx, this->Y + 8) ||
+				(8 > this->X) || (this->X > 232)) {
+				// Solidity of x-coordinate this ffc will move to next.
+				// Prevent from moving past end of screen.
+				this->Vx = 0;
+				dir_threshold_x = 0.9;
+			} else {
+				dir_threshold_x += (0.99 - dir_threshold_x) / 2;
+				this->Vx = const_speed_x;
+				// Make less likely to change direction, down to 99%.
+			}
+			
+			// y-motion
+			float p = Randf(1);
+			if (p >= dir_threshold_y) {
+				// Toggle y direction 2-3% of the time.
+				this->Vy = -const_speed_y;
+				const_speed_y = this->Vy;
+				dir_threshold_y = 0.97;
+			} else if (Screen->isSolid(this->X, this->Y + this->Vy) ||
+				Screen->isSolid(this->X, this->Y + 16 + this->Vy) || 
+				Screen->isSolid(this->X + 16, this->Y + this->Vy) ||
+				Screen->isSolid(this->X + 16, this->Y + 16 + this->Vy) ||
+				(this->Y < 8) || (this->Y > 152)) {
+				// Solidity of y-coordinate this ffc will move to next.
+				this->Vy = 0;
+				dir_threshold_y = 0.9;
+			} else {
+				this->Vy = const_speed_y;
+				dir_threshold_y += (0.99 - dir_threshold_y) / 2;
+			}
+			//================================================================
+			
+			//================================================================
+			// Detect when a cucco is hit by Link's sword and produce effect.
+			if (idle_clock <= 0) {
+				for(int i=Screen->NumLWeapons();i>0;i--){
+					lweapon l = Screen->LoadLWeapon(i);
+					if(Collision(this, l) && idle_clock <= 0) {
+						hits_left--;
+						if (hits_left <= 0) {
+							cucco_attack = true;
+							if (sfx_cucco_agitated > 0) {
+								Game->PlaySound(sfx_cucco_agitated);
+							}
+						} else if (sfx_cucco_hurt > 0) {
+							Game->PlaySound(sfx_cucco_hurt);
+						}
+						idle_clock = ACTION_TIMEOUT;
+					}
+					//if (max_hp) {
+						// Not implemented yet.
+					//}
+				}
+			} else {
+				idle_clock--;
+			}
+			//================================================================
+			
+			//================================================================
+			// Actions to carry out during attack, including timer, sounds,
+			// and spawning cuccos to the screen from the stack.
+			if (cucco_attack && (attack_time_left > 0 || 
+				attack_duration == 0)) {
+				// Play cucco sounds.
+				hits_left = hits_to_attack;
+				float cluck_chance = Randf(1);
+				if (cluck_chance > 0.95 && cluck_chance < 0.99 && 
+					sfx_cucco_hurt > 0) {
+					Game->PlaySound(sfx_cucco_hurt);
+				} else if (cluck_chance > 0.99 && sfx_cucco_agitated > 0) {
+					Game->PlaySound(sfx_cucco_agitated);
+				}
+				
+				attack_time_left--;
+				if (attack_time_left % SPAWN_INTERVAL == 0) {
+					//========================================================
+					// Grab a cucco from the stack and send it flying at Link.
+					if (chicken_stack_pos >= 0) {
+						Game->PlaySound(sfx_cucco_hurt);
+						// Only if stack is non_empty, pop one cucco.
+						ffc new_cucco = chicken_stack[chicken_stack_pos];
+						chicken_stack_pos--; // pop from chicken_stack.
+						// Now set this cucco's position & trajectory.
+						if (Randf(1) < 0.5) {
+							new_cucco->X = Rand(0, 240);
+							if (Randf(1) < 0.5) {
+								new_cucco->Y = 0;
+							} else {
+								new_cucco->Y = 160;
+							}
+						} else {
+							new_cucco->Y = Rand(0, 160);
+							if (Randf(1) < 0.5) {
+								new_cucco->X = 0;
+							} else {
+								new_cucco->X = 240;
+							}
+						}
+						
+						// Use trig to determine trajectory and x/y speeds.
+						float dist = Distance(new_cucco->X, new_cucco->Y, 
+							Link->X, Link->Y);
+						float dx = Link->X - new_cucco->X;
+						float dy = Link->Y - new_cucco->Y;
+						
+						new_cucco->Vx = attack_speed * (dx / dist);
+						new_cucco->Vy = attack_speed * (dy / dist);
+						// Change to appropriate direction.
+						if (new_cucco->Vx >= 0) {
+							new_cucco->Data = orig_d;
+						} else {
+							new_cucco->Data = orig_d + 1;
+						}
+						on_screen_size++;
+						on_screen_cucco[cucco_slot++] = new_cucco;
+					}
+					//========================================================
+				}
+			} else {
+				float cluck_chance = Randf(1);
+				// Uncomment these lines to enable ambient clucking.
+				//if (cluck_chance > 0.99 && sfx_cucco_hurt > 0) {
+				//	Game->PlaySound(sfx_cucco_hurt);
+				//}
+				cucco_attack = false;
+				attack_time_left = attack_duration;
+			}
+			//================================================================
+			if (cucco_slot > num_cuccos + 1) {
+				cucco_slot = 0;
+				// Reuse cucco slots to prevent cuccos from disappearing from
+				// screen.
+			}
+			//================================================================
+			// Handle cuccos that are already on the screen.			
+			for (int i = 0; i < 32; i++) {
+				ffc c_curr = on_screen_cucco[i];
+				if (((c_curr->X + 16) < 0 || c_curr->X > 240 ||
+					(c_curr->Y + 16) < 0 || c_curr->Y > 160) &&
+					(c_curr != blank_ffc)) {
+					// Cucco is completely offscreen.
+					c_curr->Vx = 0;
+					c_curr->Vy = 0;
+					c_curr->X = -256;
+					c_curr->Y = -256;
+					on_screen_size--;
+					on_screen_cucco[i] = blank_ffc;
+					chicken_stack_pos++;
+					chicken_stack[chicken_stack_pos] = c_curr;
+				}
+				if (LinkCollision(c_curr) && idle_clock <= 0) {
+					Link->HP -= damage;
+					Game->PlaySound(SFX_OUCH);
+					idle_clock = DAMAGE_TIMEOUT;
+				}
+			}
+			//================================================================
+			Waitframe();
+		}
+	}
+}
+
+int getFFC(int min, int max){
+	//========================================================================
+	// Return the id of the next unused FFC between ints min and max.
+	// Credit to Gleeok.
+	//========================================================================
+	
+	ffc F;int i=min-1;
+	while(i++ < max){
+		F=Screen->LoadFFC(i);
+		if(F->Data<=1){
+			return i;i=max;
+		}
+		else if(i==max) {
+			return 0;
+		}
+	}
+}
